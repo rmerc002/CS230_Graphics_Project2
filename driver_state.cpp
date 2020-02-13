@@ -71,15 +71,23 @@ void render(driver_state& state, render_type type)
     {
       numTriangles = state.num_vertices-2;
     }
-    printf("\t### num_triangles: %d\n",numTriangles);
+    // printf("\t### num_triangles: %d\n",numTriangles);
 
     for(int triangleIndex = 0; triangleIndex < numTriangles; triangleIndex ++)
     {
 
       // printf("\t### traingleIndex: %d\n", triangleIndex);
+
+
       float x[state.num_vertices] = {};
       float y[state.num_vertices] = {};
       float z[state.num_vertices] = {};
+
+      float xP[state.num_vertices] = {};
+      float yP[state.num_vertices] = {};
+      float zP[state.num_vertices] = {};
+
+      float w[state.num_vertices] = {};
       vec4 c[state.num_vertices] = {};
       float xMinObject = 1;
       float xMaxObject = -1;
@@ -112,12 +120,22 @@ void render(driver_state& state, render_type type)
         {
           vertexOffset = (triangleIndex + vertexNumber)*state.floats_per_vertex;
         }
+        x[vertexNumber] = state.vertex_data[vertexOffset + 0];
+        y[vertexNumber] = state.vertex_data[vertexOffset + 1];
+        z[vertexNumber] = state.vertex_data[vertexOffset + 2];
 
         tempVertex.data = &state.vertex_data[vertexOffset];
         state.vertex_shader(tempVertex, tempGeometry, state.uniform_data);
-        x[vertexNumber] = tempGeometry.gl_Position.x[0]/tempGeometry.gl_Position.x[3];
-        y[vertexNumber] = tempGeometry.gl_Position.x[1]/tempGeometry.gl_Position.x[3];
-        z[vertexNumber] = tempGeometry.gl_Position.x[2]/tempGeometry.gl_Position.x[3];
+        xP[vertexNumber] = tempGeometry.gl_Position.x[0]/tempGeometry.gl_Position.x[3];
+        yP[vertexNumber] = tempGeometry.gl_Position.x[1]/tempGeometry.gl_Position.x[3];
+        zP[vertexNumber] = tempGeometry.gl_Position.x[2]/tempGeometry.gl_Position.x[3];
+        w[vertexNumber] = tempGeometry.gl_Position.x[3];
+
+        xMinObject = std::min(xMinObject, xP[vertexNumber]);
+        xMaxObject = std::max(xMaxObject, xP[vertexNumber]);
+        yMinObject = std::min(yMinObject, yP[vertexNumber]);
+        yMaxObject = std::max(yMaxObject, yP[vertexNumber]);
+
         for(int fvi = 0; fvi < MAX_FLOATS_PER_VERTEX; fvi++)
         {
           if(state.interp_rules[fvi] == interp_type::flat)
@@ -131,11 +149,6 @@ void render(driver_state& state, render_type type)
         }
         state.fragment_shader(tempFragment, tempOutput, state.uniform_data);
         c[vertexNumber] = tempOutput.output_color;
-
-        xMinObject = std::min(xMinObject, x[vertexNumber]);
-        xMaxObject = std::max(xMaxObject, x[vertexNumber]);
-        yMinObject = std::min(yMinObject, y[vertexNumber]);
-        yMaxObject = std::max(yMaxObject, y[vertexNumber]);
       }
 
       state.num_triangles = state.num_vertices/3;
@@ -158,42 +171,51 @@ void render(driver_state& state, render_type type)
       yMinPixel = std::max((float)0,(float)round(((yMinObject+1)*state.image_height)/2));
       yMaxPixel = std::min((float)state.image_height,(float)round(((yMaxObject+1)*state.image_height)/2));
 
-      vec3 A, B, C, P;
-      float alpha, beta, gamma, areaABC;
+      vec3 A, B, C, P, AP, BP, CP, PP;
+      float alpha, beta, gamma, areaABC, alphaP, betaP, gammaP, areaABCP, kinv;
       A = vec3(x[0], y[0], 0);
       B = vec3(x[1], y[1], 0);
       C = vec3(x[2], y[2], 0);
       // printf("A: %f,%f\tB: %f,%f\tC: %f,%f\n",A.x[0],A.x[1],B.x[0],B.x[1],C.x[0],C.x[1]);
+
+      AP = vec3(xP[0], yP[0], 0);
+      BP = vec3(xP[1], yP[1], 0);
+      CP = vec3(xP[2], yP[2], 0);
+      // printf("AP: %f,%f\tBP: %f,%f\tCP: %f,%f\n",AP.x[0],AP.x[1],BP.x[0],BP.x[1],CP.x[0],CP.x[1]);
+
+      // printf("A: %f,%f\tB: %f,%f\tC: %f,%f\n",A.x[0],A.x[1],B.x[0],B.x[1],C.x[0],C.x[1]);
       areaABC = cross(B - C, A - C).magnitude();
+      areaABCP = cross(BP - CP, AP - CP).magnitude();
       // printf("areaABC: %f\n", areaABC);
+      // printf("areaABCP: %f\n", areaABCP);
       vec3 pixelSize = {2/(float)state.image_width, 2/(float)state.image_height,0};
-      vec3 origin, e1, e2;
-      float k0Alpha, k1Alpha, k2Alpha, k0Beta, k1Beta, k2Beta, k0Gamma, k1Gamma, k2Gamma;
-      origin = vec3(-1,-1,0)+pixelSize/(float)2;
-      e1 = origin + pixelSize*vec3(1,0,0);
-      e2 = origin + pixelSize*vec3(0,1,0);
-
-      k0Alpha = cross(C - B, origin - B).magnitude()/areaABC;// - xMinObject;
-      k1Alpha = cross(C - B, e1 - B).magnitude()/areaABC - k0Alpha;
-      k2Alpha = cross(C - B, e2 - B).magnitude()/areaABC - k0Alpha;
-      // printf("k0Alpha: %f, k1Alpha: %f, k2Alpha: %f\n",k0Alpha, k1Alpha, k2Alpha);
-
-      k0Beta = cross(A - C, origin - C).magnitude()/areaABC;// - xMinObject;
-      k1Beta = cross(A - C, e1 - C).magnitude()/areaABC - k0Beta;
-      k2Beta = cross(A - C, e2 - C).magnitude()/areaABC - k0Beta;
-      // printf("k0Beta: %f, k1Beta: %f, k2Beta: %f\n", k0Beta, k1Beta, k2Beta);
-
-      k0Gamma = cross(B - A, origin - A).magnitude()/areaABC;// - xMinObject;
-      k1Gamma = cross(B - A, e1 - A).magnitude()/areaABC - k0Gamma;
-      k2Gamma = cross(B - A, e2 - A).magnitude()/areaABC - k0Gamma;
-      // printf("k0Gamma: %f, k1Gamma: %f, k2Gamma: %f\n", k0Gamma, k1Gamma, k2Gamma);
-
-      P.x[0] = xMinPixel*pixelSize.x[0]-1+(pixelSize.x[0]/(float)2);
-      P.x[1] = yMinPixel*pixelSize.x[1]-1+(pixelSize.x[1]/(float)2);
-      P.x[2] = 0;
-      alpha = cross(B - C, P - C).magnitude()/areaABC;
-      beta = cross(A - C, P - C).magnitude()/areaABC;
-      gamma = cross(A - B, P - B).magnitude()/areaABC;
+      // vec3 origin, e1, e2;
+      // float k0Alpha, k1Alpha, k2Alpha, k0Beta, k1Beta, k2Beta, k0Gamma, k1Gamma, k2Gamma;
+      // origin = vec3(-1,-1,0)+pixelSize/(float)2;
+      // e1 = origin + pixelSize*vec3(1,0,0);
+      // e2 = origin + pixelSize*vec3(0,1,0);
+      //
+      // k0Alpha = cross(C - B, origin - B).magnitude()/areaABC;// - xMinObject;
+      // k1Alpha = cross(C - B, e1 - B).magnitude()/areaABC - k0Alpha;
+      // k2Alpha = cross(C - B, e2 - B).magnitude()/areaABC - k0Alpha;
+      // // printf("k0Alpha: %f, k1Alpha: %f, k2Alpha: %f\n",k0Alpha, k1Alpha, k2Alpha);
+      //
+      // k0Beta = cross(A - C, origin - C).magnitude()/areaABC;// - xMinObject;
+      // k1Beta = cross(A - C, e1 - C).magnitude()/areaABC - k0Beta;
+      // k2Beta = cross(A - C, e2 - C).magnitude()/areaABC - k0Beta;
+      // // printf("k0Beta: %f, k1Beta: %f, k2Beta: %f\n", k0Beta, k1Beta, k2Beta);
+      //
+      // k0Gamma = cross(B - A, origin - A).magnitude()/areaABC;// - xMinObject;
+      // k1Gamma = cross(B - A, e1 - A).magnitude()/areaABC - k0Gamma;
+      // k2Gamma = cross(B - A, e2 - A).magnitude()/areaABC - k0Gamma;
+      // // printf("k0Gamma: %f, k1Gamma: %f, k2Gamma: %f\n", k0Gamma, k1Gamma, k2Gamma);
+      //
+      // P.x[0] = xMinPixel*pixelSize.x[0]-1+(pixelSize.x[0]/(float)2);
+      // P.x[1] = yMinPixel*pixelSize.x[1]-1+(pixelSize.x[1]/(float)2);
+      // P.x[2] = 0;
+      // alpha = cross(B - C, P - C).magnitude()/areaABC;
+      // beta = cross(A - C, P - C).magnitude()/areaABC;
+      // gamma = cross(A - B, P - B).magnitude()/areaABC;
 
       // alpha = k0Alpha + k1Alpha*xMinPixel + k2Alpha*yMinPixel;
       // beta =  k0Beta  + k1Beta *xMinPixel + k2Beta *yMinPixel;
@@ -218,19 +240,56 @@ void render(driver_state& state, render_type type)
           float alphaR = cross(C - B, P - B).magnitude()/areaABC;
           float betaR = cross(A - C, P - C).magnitude()/areaABC;
           float gammaR = cross(B - A, P - A).magnitude()/areaABC;
+
+          PP.x[0] = indexX*pixelSize.x[0]-1+(pixelSize.x[0]/(float)2);
+          PP.x[1] = indexY*pixelSize.x[1]-1+(pixelSize.x[1]/(float)2);
+          PP.x[2] = 0;
+
+
+          alphaP = cross(CP - BP, PP - BP).magnitude()/areaABCP;
+          betaP = cross(AP - CP, PP - CP).magnitude()/areaABCP;
+          gammaP = cross(BP - AP, PP - AP).magnitude()/areaABCP;
+
+
+
           // printf("xPixel: %d, yPixel: %d\n",indexX, indexY);
-          // printf("Px,y: %f,%f\t alpha %f, beta %f, gamma %f, sum %f\n", P.x[0], P.x[1], alpha,beta,gamma, alpha+beta+gamma - 0.004167);
-          // //
+          // printf("\tPx,y: %f,%f\t alphaR %f, betaR %f, gammaR %f, sum %f\n", P.x[0], P.x[1], alphaR,betaR,gammaR, alphaR+betaR+gammaR);
+          // printf("\tPx,y: %f,%f\t alphaP %f, betaP %f, gammaP %f, sum %f\n", P.x[0], P.x[1], alphaP,betaP,gammaP, alphaP+betaP+gammaP);
+// //
           // printf("REAL\t\t\t alpha %f, beta %f, gamma %f, sum %f\n", alphaR,betaR,gammaR, alphaR+betaR+gammaR);
           // exit(0);
           // printf("indexX: %d, indexY: %d, alpha: %f, beta: %f, gamma: %f, sum: %f\n",indexX,indexY, alpha, beta, gamma, alpha+beta+gamma);
-          if(alphaR >= -1e-4 && betaR >= -1e-4 && gammaR >= -1e-4 && std::abs(1 - (alphaR + betaR + gammaR)) < 3e-4)
+
+          if(alphaP >= -1e-4 && betaP >= -1e-4 && gammaP >= -1e-4 && std::abs(1 - (alphaP + betaP + gammaP)) < 3e-4)
           {
-            float bz = alphaR*z[0] + betaR*z[1] + gammaR*z[2];
-            // printf("z old:
+            // printf("\t### here\n");
+            float bz = alphaP*zP[0] + betaP*zP[1] + gammaP*zP[2];
+            // printf("\t\t >>bz: %f", bz);
             if(bz < state.image_depth[imageIndex] && bz >= -1 && bz <= 1)
             {
-              vec4 bc = alphaR*c[0] + betaR*c[1] + gammaR*c[2];
+              vec4 bc;
+              if(state.interp_rules[state.floats_per_vertex-1] == interp_type::smooth)
+              {
+                // printf("  smooth\n");
+                kinv = 1/(alphaP/w[0] + betaP/w[1] + gammaP/w[2]);
+                alpha = alphaP*kinv/w[0];
+                beta = betaP*kinv/w[1];
+                gamma = gammaP*kinv/w[2];
+
+                bc = alpha*c[0] + beta*c[1] + gamma*c[2];
+              }
+              else if(state.interp_rules[state.floats_per_vertex-1] == interp_type::flat)
+              {
+                // printf("  flat\n");
+                bc = c[0];
+              }
+              else if(state.interp_rules[state.floats_per_vertex-1] == interp_type::noperspective)
+              {
+                // printf("  noperspective\n");
+                bc = alphaP*c[0] + betaP*c[1] + gammaP*c[2];
+              }
+
+
               // printf("colors: %f, %f, %f, %f\n",c[1].x[0], c[1].x[1], c[1].x[2], c[1].x[3]);
               bc *= 255;
               bc = componentwise_min(bc,vec4(255,255,255,0));
@@ -238,9 +297,9 @@ void render(driver_state& state, render_type type)
               state.image_depth[imageIndex] = bz;
             }
           }
-          alpha += k1Alpha;
-          beta  += k1Beta;
-          gamma += k1Gamma;
+          // alpha += k1Alpha;
+          // beta  += k1Beta;
+          // gamma += k1Gamma;
           imageIndex += 1;
 
         }
@@ -248,9 +307,9 @@ void render(driver_state& state, render_type type)
         // {
         //   exit(0);
         // }
-        alpha += k2Alpha - (subWidthPixel+1)*k1Alpha;
-        beta += k2Beta - (subWidthPixel+1)*k1Beta;
-        gamma += k2Gamma - (subWidthPixel+1)*k1Gamma;
+        // alpha += k2Alpha - (subWidthPixel+1)*k1Alpha;
+        // beta += k2Beta - (subWidthPixel+1)*k1Beta;
+        // gamma += k2Gamma - (subWidthPixel+1)*k1Gamma;
         imageIndex += state.image_width - subWidthPixel - 1;
       }
 
